@@ -1,0 +1,106 @@
+{
+  "period_days": 30,
+  "residual_payee": "equity",
+  "collateral": {
+    "pool_balance_minor": 36465017400000
+  },
+  "fees": [
+    {
+      "fee_id": "servicing",
+      "basis_bps": 27,
+      "flat_minor": 0
+    },
+    {
+      "fee_id": "trustee",
+      "basis_bps": 0,
+      "flat_minor": 13986000000
+    },
+    {
+      "fee_id": "custodian",
+      "basis_bps": 0,
+      "flat_minor": 241920000
+    }
+  ],
+  "tranches": [
+    {
+      "tranche_id": "A1",
+      "class": "senior",
+      "seniority": 1,
+      "balance_minor": 19656000000000,
+      "coupon_bps": 505,
+      "scheduled_principal_minor": 453600000000,
+      "interest_carryforward_minor": 0,
+      "principal_carryforward_minor": 0
+    },
+    {
+      "tranche_id": "A2",
+      "class": "senior",
+      "seniority": 2,
+      "balance_minor": 7938000000000,
+      "coupon_bps": 585,
+      "scheduled_principal_minor": 181440000000,
+      "interest_carryforward_minor": 0,
+      "principal_carryforward_minor": 0
+    },
+    {
+      "tranche_id": "B",
+      "class": "senior",
+      "seniority": 3,
+      "balance_minor": 3628800000000,
+      "coupon_bps": 690,
+      "scheduled_principal_minor": 68040000000,
+      "interest_carryforward_minor": 9450000000,
+      "principal_carryforward_minor": 0
+    },
+    {
+      "tranche_id": "C",
+      "class": "subordinate",
+      "seniority": 4,
+      "balance_minor": 1890000000000,
+      "coupon_bps": 940,
+      "scheduled_principal_minor": 30240000000,
+      "interest_carryforward_minor": 5896800000,
+      "principal_carryforward_minor": 0
+    },
+    {
+      "tranche_id": "D",
+      "class": "subordinate",
+      "seniority": 5,
+      "balance_minor": 1058400000000,
+      "coupon_bps": 1225,
+      "scheduled_principal_minor": 15120000000,
+      "interest_carryforward_minor": 0,
+      "principal_carryforward_minor": 0
+    },
+    {
+      "tranche_id": "A0",
+      "class": "senior",
+      "seniority": 0,
+      "balance_minor": 0,
+      "coupon_bps": 460,
+      "scheduled_principal_minor": 0,
+      "interest_carryforward_minor": 0,
+      "principal_carryforward_minor": 0
+    },
+    {
+      "tranche_id": " b ",
+      "class": "senior",
+      "seniority": 3,
+      "balance_minor": 2268000000000,
+      "coupon_bps": 690,
+      "scheduled_principal_minor": 68040000000,
+      "interest_carryforward_minor": 0,
+      "principal_carryforward_minor": 0
+    },
+    {
+      "tranche_id": "X9",
+      "class": "subordinate",
+      "seniority": 6,
+      "balance_minor": 680400000000,
+      "coupon_bps": 0,
+      "scheduled_principal_minor": 7560000000,
+      "interest_carryforward_minor": 0,
+      "principal_carryforward_minor": 0
+    }
+  ]
+}

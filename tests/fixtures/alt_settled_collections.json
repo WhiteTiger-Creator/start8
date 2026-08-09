@@ -1,0 +1,19 @@
+{
+  "period": "2026-08",
+  "settlement_currency": "USD",
+  "category_totals_minor": {
+    "prepayment": 1500000,
+    "recovery": 300000,
+    "scheduled_interest": 23200000,
+    "scheduled_principal": 5000000
+  },
+  "items": [
+    {"item_id": "alt-pp-01", "category": "prepayment", "obligor": "north-fund", "amount_minor": 1500000},
+    {"item_id": "alt-pp-02", "category": "prepayment", "obligor": "kestrel-ag", "amount_minor": 0},
+    {"item_id": "alt-rc-01", "category": "recovery", "obligor": "meridian-lp", "amount_minor": 300000},
+    {"item_id": "alt-si-01", "category": "scheduled_interest", "obligor": "north-fund", "amount_minor": 12300000},
+    {"item_id": "alt-si-02", "category": "scheduled_interest", "obligor": "harbor-trust", "amount_minor": 7450000},
+    {"item_id": "alt-si-03", "category": "scheduled_interest", "obligor": "meridian-lp", "amount_minor": 3450000},
+    {"item_id": "alt-sp-01", "category": "scheduled_principal", "obligor": "kestrel-ag", "amount_minor": 5000000}
+  ]
+}

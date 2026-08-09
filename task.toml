@@ -1,0 +1,104 @@
+artifacts = ["/app"]
+name = "payment-waterfall-engine"
+
+[metadata]
+author_name = "Jonathan"
+author_email = "jtolbert0175@gmail.com"
+difficulty_explanation = '''
+The graded collection file carries a quarter of a million lines across sixty obligors, and the board's
+concentration cap needs every obligor's settled total before the pool can be distributed. Accumulating those
+totals in one pass keeps a run under a second; re-summing an obligor's lines for each line is the line count
+times the lines per obligor and cannot meet the 90-second wall-clock budget the contract states.
+
+Restoring this distribution engine is the work of a structured-finance deal administrator or
+securitisation systems engineer rebuilding a trustee report after a failed period close, and it is a
+genuinely dependent chain rather than a single repair. The servicer's collections file ships raw, so the
+first step is to reconcile it: line items arrive in mixed units and currencies, reversals have to net
+against the lines they name rather than stand as their own entries, and a category the control totals do
+not name is not settled at all. The conversion direction, the scaling, the netting and the exclusion all
+sit in the board's final decision, superseding a draft that called the unit tags informational and an
+interim that divided by the rate instead of multiplying. Getting any of that wrong shifts the money by
+enough to change how far down the waterfall cash reaches, and a mis-scaled line or an unnetted reversal
+flips whether the subordinate tranches are paid at all. Only then can the engineer reconstruct the cascade
+itself from a long, mostly-noise decision log rather than a specification: the exact step order, the two
+coverage tests and the fact that one of them is measured only after the step above it has already paid,
+what a breached test diverts and which later step it defers and caps, whether unpaid interest compounds
+(and at which of two opposite rounding directions, per class), a cap on the residual whose baseline was
+retuned late, and a register whose ordering is by materiality and whose per-payee cap is applied only
+after that ordering. Because it is a cascade, an error in an early step moves every payment below it, so a
+plausible-looking reconstruction that misses one rule is wrong everywhere. All data is synthetic; the deal,
+the obligors and the tranches are invented for this exercise.
+'''
+solution_explanation = '''
+solution/solve.sh drives the two dependent steps inside the environment container. Step one runs
+solution/reconcile_collections.py, which implements the board's final reconciliation decision (#WF-4170):
+scale whole-currency lines by one hundred through exact integer arithmetic, multiply foreign-currency lines
+by the quoted rate in basis points and floor, subtract each reversal from the line it names with a floor of
+zero, drop lines that are not strictly positive and lines whose category the control totals do not name,
+order the survivors by category then item_id, and write them with the reconciled per-category totals to
+/app/data/settled_collections.json, refusing to write a set that does not tie to /app/data/control_totals.json.
+Step two copies solution/distribute_fixed.py over /app/workflow/distribute.py and runs it against that
+reconciled file. The engine normalises the tranche register, accrues each due on a 30/360 basis with the
+senior leg floored and the subordinate leg ceiled, prices the fees with a ceiled basis leg, computes the
+interest coverage ratio from the eligible category subtotals, then cascades: fees, senior interest,
+subordinate interest only while coverage holds, sequential senior principal, a capped turbo diversion when
+coverage is breached, the overcollateralisation test on post-payment balances, subordinate principal
+withheld when that test is breached, the deferred and capped subordinate interest, and a capped residual.
+Shortfalls carry forward with interest compounding in opposite rounding directions by class and principal
+not compounding at all. It then admits, orders by materiality and applies the per-payee cap after ordering,
+writing exactly distribution_summary.json, tranche_ledger.json and payment_register.jsonl into --output-dir.
+Every governing value is traced to its final entry in /app/incident/waterfall_governance_log.md;
+report_spec.json supplies only the output contract and no derivation rule.
+'''
+verification_explanation = '''
+The separate verifier (tests/Dockerfile builds an isolated image the agent cannot see) collects the agent's
+whole /app as the declared artifact and runs tests/test_outputs.py against it. Step one is graded directly:
+the reconciled /app/data/settled_collections.json must equal the sealed expectation, its per-category totals
+must tie to the shipped control totals, its items must carry only settlement fields, and the raw sources
+must be left intact -- then three wrong reconciliations rebuilt from those same sources (amounts left
+unnormalised, reversals ignored, and the naive whole-file sum the environment actually ships) are each fed
+to the agent's own engine and required to disagree with the sealed distribution, with a dedicated test
+proving that the subordinate tranches are paid under the reconciled collections and paid nothing under the
+unnormalised and naive ones. Step two executes the agent's /app/workflow/distribute.py as a subprocess under
+an unprivileged uid (setpriv 65534, scrubbed environment, hard timeout) over both the reconciled file and a
+held-out alternate period, and diffs distribution_summary.json, tranche_ledger.json and
+payment_register.jsonl against sealed fixtures generated from the reference. It also checks schema, field
+and sort invariants, summary math and the cash-conservation identity, that no emitted value is a float, the
+per-payee cap, policy layering, idempotency, the command-line defaults, and that the tranche terms and
+policy paths actually influence output. Three dedicated tests prove the governance dialect deviates from a
+plain cascade: the overcollateralisation ratio measured before the senior principal step breaches while the
+emitted post-payment reading does not, a short period pays the most senior tranche in full and the next
+nothing where a pro-rata split would have paid both, and the carryforward legs compound in opposite
+rounding directions. The frozen broken snapshot /app/workflow/.distribute.original is asserted present, and
+its outputs are asserted merely different from the sealed ones rather than pinned. Confirmed locally in the
+real two-container flow: after solve.sh the verifier gives reward 1; a fresh environment with no solve.sh
+gives 0, and so does an environment where the engine is repaired but the collections are never reconciled.
+'''
+relevant_experience = '''
+Experience reconciling a raw servicer collections file to authoritative control totals under mixed units,
+fixed-rate currency conversion and reversal netting, and reconstructing a sequential priority cash waterfall
+with coverage triggers, deferral and diversion effects, shortfall carryforward and per-step rounding from an
+authoritative but noisy decision log rather than a clean specification -- tracing incrementally-revised
+rules to their final form, holding integer minor-unit arithmetic exact, and matching a byte-level output
+contract.
+'''
+category = "Operations"
+subcategory = "Finance"
+tags = ["structured-finance", "waterfall", "tranches", "collections-reconciliation", "coverage-triggers"]
+expert_time_estimate_hours = 4
+difficulty = "advanced"
+languages = ["python"]
+
+[environment]
+build_timeout_sec = 900
+cpus = 2
+memory_mb = 4096
+storage_mb = 10240
+network_mode = "no-network"
+
+[agent]
+timeout_sec = 5400
+
+[verifier]
+timeout_sec = 1800
+environment_mode = "separate"

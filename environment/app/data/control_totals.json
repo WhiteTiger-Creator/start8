@@ -1,0 +1,13 @@
+{
+  "period": "2026-07",
+  "settlement_currency": "USD",
+  "fx_rates_bps": {
+    "EUR": 11400
+  },
+  "category_totals_minor": {
+    "prepayment": 183091671220,
+    "recovery": 113983496220,
+    "scheduled_interest": 346176578480,
+    "scheduled_principal": 387896230580
+  }
+}

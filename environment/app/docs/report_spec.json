@@ -1,0 +1,322 @@
+{
+  "workflow_repair": {
+    "path": "/app/workflow/distribute.py",
+    "cli_usage": "python3 /app/workflow/distribute.py --input PATH --output-dir PATH",
+    "defaults": {
+      "input": "/app/data/settled_collections.json",
+      "output_dir": "/app/output",
+      "tranche_terms": "/app/data/tranche_terms.json",
+      "waterfall_policy": "/app/data/waterfall_policy.json"
+    }
+  },
+  "output_files": {
+    "distribution_summary_json": "distribution_summary.json",
+    "tranche_ledger_json": "tranche_ledger.json",
+    "payment_register_jsonl": "payment_register.jsonl",
+    "additional_files_allowed": false
+  },
+  "field_types": {
+    "amount_minor": {
+      "type": "integer",
+      "unit": "settlement currency minor units",
+      "input_coercion": "int(str(amount).strip()); on failure int(float(str(amount).strip())); on failure 0"
+    },
+    "item_id": {
+      "type": "string"
+    },
+    "category": {
+      "type": "string",
+      "input_coercion": "str(category).strip().lower(); empty -> 'unknown'"
+    },
+    "obligor": {
+      "type": "string",
+      "input_coercion": "str(obligor).strip().lower(); empty -> 'unknown'"
+    },
+    "period": {
+      "type": "string"
+    },
+    "settlement_currency": {
+      "type": "string",
+      "input_coercion": "str(value).strip().upper()"
+    },
+    "tranche_id": {
+      "type": "string",
+      "input_coercion": "str(tranche_id).strip().upper()"
+    },
+    "fee_id": {
+      "type": "string",
+      "input_coercion": "str(fee_id).strip().lower()"
+    },
+    "payee_id": {
+      "type": "string"
+    },
+    "step_index": {
+      "type": "integer"
+    },
+    "step_kind": {
+      "type": "string",
+      "enum": [
+        "fee",
+        "residual",
+        "senior_interest",
+        "senior_principal",
+        "sub_interest",
+        "sub_principal",
+        "turbo_principal"
+      ]
+    },
+    "trigger_flag": {
+      "type": "string",
+      "enum": [
+        "ic_deferred",
+        "ic_diverted",
+        "none",
+        "oc_capped",
+        "oc_skipped"
+      ]
+    },
+    "ic_breached": {
+      "type": "boolean"
+    },
+    "oc_breached": {
+      "type": "boolean"
+    },
+    "ic_bps": {
+      "type": "integer",
+      "unit": "basis points"
+    },
+    "oc_bps": {
+      "type": "integer",
+      "unit": "basis points"
+    },
+    "category_subtotals": {
+      "type": "object",
+      "keys": "category name",
+      "values": "integer",
+      "key_sort": "ascending"
+    },
+    "step_kind_counts": {
+      "type": "object",
+      "keys": "step_kind",
+      "values": "integer"
+    },
+    "money_fields": {
+      "type": "integer",
+      "unit": "settlement currency minor units"
+    },
+    "max_obligor_concentration_bps": {
+      "type": "integer"
+    }
+  },
+  "settled_collections_source": {
+    "path": "/app/data/settled_collections.json",
+    "container": "object",
+    "required_fields": [
+      "category_totals_minor",
+      "items",
+      "period",
+      "settlement_currency"
+    ],
+    "category_totals_minor": {
+      "type": "object",
+      "keys": "category name",
+      "values": "integer",
+      "key_sort": "ascending"
+    },
+    "items": {
+      "type": "array",
+      "item_required_fields": [
+        "amount_minor",
+        "category",
+        "item_id",
+        "obligor"
+      ],
+      "item_sort": "category ascending, then item_id ascending"
+    }
+  },
+  "collections_source": {
+    "path": "/app/data/collections.json",
+    "container": "array",
+    "item_fields": [
+      "category",
+      "currency",
+      "entry_type",
+      "item_id",
+      "obligor",
+      "reported_amount",
+      "reverses",
+      "unit"
+    ],
+    "entry_type": {
+      "type": "string",
+      "enum": [
+        "collection",
+        "reversal"
+      ]
+    },
+    "unit": {
+      "type": "string",
+      "enum": [
+        "major",
+        "minor"
+      ]
+    },
+    "reverses": {
+      "type": "string",
+      "presence": "reversal entries only"
+    },
+    "reported_amount": {
+      "type": "integer or decimal string"
+    }
+  },
+  "control_totals_source": {
+    "path": "/app/data/control_totals.json",
+    "container": "object",
+    "required_fields": [
+      "category_totals_minor",
+      "fx_rates_bps",
+      "period",
+      "settlement_currency"
+    ],
+    "fx_rates_bps": {
+      "type": "object",
+      "keys": "currency code",
+      "values": "integer basis points"
+    },
+    "category_totals_minor": {
+      "type": "object",
+      "keys": "category name",
+      "values": "integer"
+    }
+  },
+  "tranche_terms_source": {
+    "path": "/app/data/tranche_terms.json",
+    "container": "object",
+    "required_fields": [
+      "collateral",
+      "fees",
+      "period_days",
+      "residual_payee"
+    ],
+    "tranche_fields": [
+      "balance_minor",
+      "class",
+      "coupon_bps",
+      "interest_carryforward_minor",
+      "principal_carryforward_minor",
+      "scheduled_principal_minor",
+      "seniority",
+      "tranche_id"
+    ],
+    "fee_fields": [
+      "basis_bps",
+      "fee_id",
+      "flat_minor"
+    ],
+    "collateral_fields": [
+      "pool_balance_minor"
+    ]
+  },
+  "policy_source": {
+    "path": "/app/data/waterfall_policy.json",
+    "shape": "{\"default\": {field: int, ...}, \"tranche_overrides\": {tranche_id: {field: int, ...}, ...}}",
+    "fields": [
+      "deferred_sub_cap_minor",
+      "divert_cap_minor",
+      "ic_trigger_bps",
+      "oc_trigger_bps",
+      "register_min_minor",
+      "register_shortfall_min_minor",
+      "residual_cap_minor",
+      "sub_penalty_bps"
+    ]
+  },
+  "tranche_ledger_json": {
+    "output_path": "tranche_ledger.json",
+    "container": "object keyed by tranche_id, each value the array of that tranche's payment step objects",
+    "key_sort": "ascending",
+    "item_sort": "step_index ascending",
+    "required_fields": [
+      "step_index",
+      "step_id",
+      "step_kind",
+      "due_minor",
+      "paid_minor",
+      "shortfall_minor",
+      "funds_before_minor",
+      "funds_after_minor",
+      "opening_balance_minor",
+      "closing_balance_minor",
+      "carryforward_out_minor",
+      "trigger_flag"
+    ]
+  },
+  "payment_register": {
+    "output_path": "payment_register.jsonl",
+    "container": "one compact JSON object per line, json.dumps(..., separators=(',', ':'))",
+    "step_id_format": "{step_kind}:{payee_id}",
+    "required_fields": [
+      "payee_id",
+      "step_index",
+      "step_id",
+      "step_kind",
+      "due_minor",
+      "paid_minor",
+      "shortfall_minor",
+      "funds_before_minor",
+      "funds_after_minor",
+      "opening_balance_minor",
+      "closing_balance_minor",
+      "carryforward_out_minor",
+      "trigger_flag"
+    ]
+  },
+  "distribution_summary_json": {
+    "output_path": "distribution_summary.json",
+    "container": "object",
+    "schema_version": "waterfall-dist-v1",
+    "required_fields": [
+      "schema_version",
+      "period",
+      "settlement_currency",
+      "raw_item_count",
+      "settled_item_count",
+      "category_subtotals",
+      "available_funds_minor",
+      "senior_interest_due_minor",
+      "ic_bps",
+      "ic_breached",
+      "oc_bps",
+      "oc_breached",
+      "fee_paid_minor",
+      "senior_interest_paid_minor",
+      "senior_principal_paid_minor",
+      "turbo_principal_paid_minor",
+      "sub_interest_paid_minor",
+      "sub_principal_paid_minor",
+      "residual_paid_minor",
+      "unapplied_funds_minor",
+      "total_paid_minor",
+      "total_shortfall_minor",
+      "total_carryforward_out_minor",
+      "executed_step_count",
+      "registered_step_count",
+      "step_kind_counts",
+      "max_paid_minor",
+      "max_shortfall_minor",
+      "max_carryforward_out_minor",
+      "excluded_concentration_minor",
+      "max_obligor_concentration_bps"
+    ],
+    "step_kind_counts_key_order": [
+      "fee",
+      "residual",
+      "senior_interest",
+      "senior_principal",
+      "sub_interest",
+      "sub_principal",
+      "turbo_principal"
+    ]
+  },
+  "runtime_budget_seconds": 90
+}

@@ -1,0 +1,19 @@
+{
+  "default": {
+    "ic_trigger_bps": 11500,
+    "oc_trigger_bps": 11700,
+    "divert_cap_minor": 4500000,
+    "residual_cap_minor": 2400000,
+    "register_min_minor": 50000,
+    "sub_penalty_bps": 150,
+    "concentration_cap_bps": 900
+  },
+  "tranche_overrides": {
+    "B": {
+      "register_min_minor": 5000000
+    },
+    "D": {
+      "sub_penalty_bps": 210
+    }
+  }
+}
