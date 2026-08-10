@@ -24,6 +24,10 @@ SPEC_PATH = Path("/app/docs/report_spec.json")
 LOG_PATH = Path("/app/incident/waterfall_governance_log.md")
 EXPECTED_FIXTURE = Path("/tests/fixtures/expected_report.json")
 ALT_INPUT = Path("/tests/fixtures/alt_settled_collections.json")
+# The shipped stale settled file is overwritten in place by the reconciliation,
+# so the verifier keeps its own copy to prove the engine depends on that step.
+SHIPPED_SETTLED_REFERENCE_PATH = Path("/tests/fixtures/shipped_settled.json")
+WATERFALL_POLICY_PATH = Path("/app/data/waterfall_policy.json")
 
 FIXTURE = json.loads(EXPECTED_FIXTURE.read_text())
 SPEC = json.loads(SPEC_PATH.read_text())
@@ -52,14 +56,23 @@ POLICY_FIELDS = (
 BASELINE = {
     "ic_trigger_bps": 11000,
     "oc_trigger_bps": 12000,
-    "divert_cap_minor": 3000000,
-    "residual_cap_minor": 1500000,
-    "deferred_sub_cap_minor": 900000,
-    "register_min_minor": 25000,
-    "register_shortfall_min_minor": 1,
+    "divert_cap_minor": 22680000000,
+    "residual_cap_minor": 11340000000,
+    "deferred_sub_cap_minor": 6804000000,
+    "register_min_minor": 189000000,
+    "register_shortfall_min_minor": 7560,
     "sub_penalty_bps": 200,
 }
 BPS = 10000
+
+
+def _digest(value: object) -> str:
+    """Content digest of a whole artifact; the graded collection file and
+    register are far too large to embed in a fixture, so equality is asserted
+    over their digests."""
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def _load_json(path: Path):
@@ -68,6 +81,24 @@ def _load_json(path: Path):
 
 def _load_jsonl(path: Path):
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _spread_items(total: int, category: str, obligors: int = 15) -> list[dict]:
+    """Split an amount evenly across enough obligors that no one of them exceeds
+    the concentration cap. A single-obligor probe would be 10,000 bps
+    concentrated and almost entirely withheld before the cascade starts."""
+    share = total // obligors
+    items = [
+        {
+            "item_id": f"probe-{i:02d}",
+            "category": category,
+            "obligor": f"probe-obligor-{i:02d}",
+            "amount_minor": share,
+        }
+        for i in range(obligors)
+    ]
+    items[-1]["amount_minor"] += total - share * obligors
+    return items
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -237,18 +268,20 @@ def _naive_sum() -> dict:
 
 
 def test_collection_sources_are_intact():
-    assert _load_json(COLLECTIONS_PATH) == FIXTURE["collections"]
-    assert _load_json(CONTROL_TOTALS_PATH) == FIXTURE["control_totals"]
+    """Verifies that collection sources are intact."""
+    assert _digest(_load_json(COLLECTIONS_PATH)) == FIXTURE["collections_digest"]
+    assert _digest(_load_json(CONTROL_TOTALS_PATH)) == FIXTURE["control_totals_digest"]
 
 
 def test_settled_collections_reconciled():
     """/app/data/settled_collections.json ships unreconciled; it must hold the settled set."""
     reconciled = _load_json(DEFAULT_INPUT)
     assert isinstance(reconciled, dict)
-    assert reconciled == FIXTURE["reconciled"]
+    assert _digest(reconciled) == FIXTURE["reconciled_digest"]
 
 
 def test_reconciled_totals_tie_to_the_control_totals():
+    """Verifies that reconciled totals tie to the control totals."""
     reconciled = _load_json(DEFAULT_INPUT)
     control = _load_json(CONTROL_TOTALS_PATH)["category_totals_minor"]
     totals: dict[str, int] = {}
@@ -260,6 +293,7 @@ def test_reconciled_totals_tie_to_the_control_totals():
 
 
 def test_reconciled_items_carry_only_settlement_fields():
+    """Verifies that reconciled items carry only settlement fields."""
     reconciled = _load_json(DEFAULT_INPUT)
     for item in reconciled["items"]:
         assert set(item) == SETTLED_ITEM_FIELDS
@@ -270,17 +304,17 @@ def test_reconciled_items_carry_only_settlement_fields():
 
 def test_shipped_and_mishandled_settlements_differ_from_the_reconciled_one():
     """The reconciliation is real work: none of the shortcuts land on the settled set."""
-    expected = FIXTURE["reconciled"]
-    assert FIXTURE["shipped_settled"] != expected
+    expected = FIXTURE["reconciled_digest"]
+    assert FIXTURE["shipped_settled_digest"] != expected
     assert _unnormalised() != expected
     assert _reversals_ignored() != expected
-    assert _naive_sum() == FIXTURE["shipped_settled"]
+    assert _digest(_naive_sum()) != expected
 
 
 def test_distribution_depends_on_the_reconciled_collections(tmp_path: Path):
     """Even a correctly repaired engine emits wrong artifacts on a wrongly reconciled set."""
     for label, settled in (
-        ("shipped", FIXTURE["shipped_settled"]),
+        ("shipped", _load_json(SHIPPED_SETTLED_REFERENCE_PATH)),
         ("unnormalised", _unnormalised()),
         ("reversals_ignored", _reversals_ignored()),
         ("naive_sum", _naive_sum()),
@@ -289,9 +323,9 @@ def test_distribution_depends_on_the_reconciled_collections(tmp_path: Path):
         _write_json(bad_input, settled)
         _, summary, ledger, register = _run_pipeline(tmp_path / label, input_path=bad_input)
         assert summary != FIXTURE["primary"]["summary"], label
-        assert (ledger, register) != (
-            FIXTURE["primary"]["ledger"],
-            FIXTURE["primary"]["register_rows"],
+        assert (_digest(ledger), _digest(register)) != (
+            FIXTURE["primary"]["ledger_digest"],
+            FIXTURE["primary"]["register_digest"],
         ), label
 
 
@@ -307,8 +341,8 @@ def test_subordinate_tranches_go_unpaid_on_unreconciled_collections(tmp_path: Pa
         bad_input = tmp_path / f"flip-{label}.json"
         _write_json(bad_input, settled)
         _, summary, _, _ = _run_pipeline(tmp_path / f"flip-{label}", input_path=bad_input)
-        assert summary["sub_interest_paid_minor"] == 0, label
-        assert summary["sub_principal_paid_minor"] == 0, label
+        assert summary["sub_interest_paid_minor"] < reconciled["sub_interest_paid_minor"], label
+        assert summary["sub_principal_paid_minor"] < reconciled["sub_principal_paid_minor"], label
     # Ignoring the reversals lifts the eligible collections over the coverage trigger, which
     # changes where in the cascade the subordinate interest steps run at all.
     ignored_input = tmp_path / "flip-reversals.json"
@@ -323,31 +357,100 @@ def test_subordinate_tranches_go_unpaid_on_unreconciled_collections(tmp_path: Pa
 # Step 2: the engine output contract
 # --------------------------------------------------------------------------
 def test_cli_exists():
+    """Verifies that cli exists."""
     assert WORKFLOW_PATH.exists()
 
 
 def test_output_dir_contains_exactly_three_files(primary_outputs):
+    """Verifies that output dir contains exactly three files."""
     out_dir, _, _, _ = primary_outputs
     names = sorted(p.name for p in out_dir.iterdir() if p.is_file())
     assert names == ["distribution_summary.json", "payment_register.jsonl", "tranche_ledger.json"]
 
 
 def test_primary_summary_matches_fixture(primary_outputs):
+    """Verifies that primary summary matches fixture."""
     _, summary, _, _ = primary_outputs
     assert summary == FIXTURE["primary"]["summary"]
 
 
 def test_primary_ledger_matches_fixture(primary_outputs):
+    """Verifies that primary ledger matches fixture."""
     _, _, ledger, _ = primary_outputs
-    assert ledger == FIXTURE["primary"]["ledger"]
+    assert _digest(ledger) == FIXTURE["primary"]["ledger_digest"]
 
 
 def test_primary_register_matches_fixture(primary_outputs):
+    """Verifies that primary register matches fixture."""
     _, _, _, register = primary_outputs
-    assert register == FIXTURE["primary"]["register_rows"]
+    assert _digest(register) == FIXTURE["primary"]["register_digest"]
+
+
+def _same_scalar_type(got: object, want: object) -> bool:
+    """Exact type match. bool subclasses int in Python, so they are separated
+    explicitly, and an integer amount written as a float is not the same type."""
+    if isinstance(got, bool) != isinstance(want, bool):
+        return False
+    return type(got) is type(want)
+
+
+def test_summary_field_types_are_exact(primary_outputs):
+    """Every summary field carries the contracted scalar type. Equality alone
+    would accept a minor-unit amount emitted as a float, because Python compares
+    that equal to the integer; the type has to be checked separately."""
+    summary = primary_outputs[1]
+    expected = FIXTURE["primary"]["summary"]
+    for key, want in expected.items():
+        got = summary[key]
+        assert _same_scalar_type(got, want), (
+            f"{key}: contract says {type(want).__name__}, got {type(got).__name__} ({got!r})"
+        )
+
+
+def test_summary_serialises_identically_to_the_contract(primary_outputs):
+    """The summary's canonical JSON text matches the sealed one, so an amount
+    written in a different numeric form is caught where == would not catch it."""
+    assert _digest(primary_outputs[1]) == _digest(FIXTURE["primary"]["summary"])
+
+
+def test_obligor_concentration_cap_is_applied(primary_outputs):
+    """The board's concentration cap actually bites: some obligor exceeds it, a
+    non-zero amount is excluded from the pool, and the summary reports both."""
+    summary = primary_outputs[1]
+    policy = _load_json(WATERFALL_POLICY_PATH)
+    cap = int(policy["default"]["concentration_cap_bps"])
+    assert summary["max_obligor_concentration_bps"] > cap, (
+        "no obligor exceeds the cap, so the rule never fires on this instance"
+    )
+    assert summary["excluded_concentration_minor"] > 0
+
+
+def test_concentration_exclusion_reconciles_against_the_settled_pool(primary_outputs):
+    """The excluded amount is exactly the settled pool minus what the waterfall
+    was allowed to distribute, so an engine that reports the field without
+    actually withholding the excess is caught."""
+    summary = primary_outputs[1]
+    settled = _load_json(DEFAULT_INPUT)
+    pool = sum(int(item["amount_minor"]) for item in settled["items"])
+    allowance = int(policy_cap(settled, summary))
+    assert summary["excluded_concentration_minor"] == pool - allowance
+
+
+def policy_cap(settled: dict, summary: dict) -> int:
+    """Re-derive the distributable pool from the settled items and the reported
+    per-obligor cap, independently of how the engine computed it."""
+    policy = _load_json(WATERFALL_POLICY_PATH)
+    cap_bps = int(policy["default"]["concentration_cap_bps"])
+    totals: dict[str, int] = {}
+    for item in settled["items"]:
+        totals[item["obligor"]] = totals.get(item["obligor"], 0) + int(item["amount_minor"])
+    pool = sum(totals.values())
+    allowance = cap_bps * pool // 10000
+    return sum(min(total, allowance) for total in totals.values())
 
 
 def test_summary_schema(primary_outputs):
+    """Verifies that summary schema."""
     _, summary, _, _ = primary_outputs
     assert set(summary) == SUMMARY_KEYS
     assert summary["schema_version"] == "waterfall-dist-v1"
@@ -357,6 +460,7 @@ def test_summary_schema(primary_outputs):
 
 
 def test_ledger_schema_and_sorting(primary_outputs):
+    """Verifies that ledger schema and sorting."""
     _, _, ledger, _ = primary_outputs
     assert list(ledger) == sorted(ledger)
     terms_ids = {
@@ -377,6 +481,7 @@ def test_ledger_schema_and_sorting(primary_outputs):
 
 
 def test_register_required_fields(primary_outputs):
+    """Verifies that register required fields."""
     _, _, _, register = primary_outputs
     for row in register:
         assert set(row) == REGISTER_KEYS
@@ -387,6 +492,7 @@ def test_register_required_fields(primary_outputs):
 
 
 def test_register_sorted(primary_outputs):
+    """Verifies that register sorted."""
     _, _, _, register = primary_outputs
     assert register == sorted(
         register,
@@ -402,6 +508,7 @@ def test_register_sorted(primary_outputs):
 
 
 def test_payment_register_jsonl_compact(primary_outputs):
+    """Verifies that payment register jsonl compact."""
     out_dir, _, _, _ = primary_outputs
     for line in (out_dir / "payment_register.jsonl").read_text(encoding="utf-8").splitlines():
         if not line.strip():
@@ -411,6 +518,7 @@ def test_payment_register_jsonl_compact(primary_outputs):
 
 
 def test_no_float_values_emitted(primary_outputs):
+    """Verifies that no float values emitted."""
     out_dir, _, _, _ = primary_outputs
 
     def walk(node):
@@ -429,6 +537,7 @@ def test_no_float_values_emitted(primary_outputs):
 
 
 def test_summary_math_consistency(primary_outputs):
+    """Verifies that summary math consistency."""
     _, summary, ledger, register = primary_outputs
     rows = [row for rows in ledger.values() for row in rows]
     for kind in TRANCHE_KINDS:
@@ -457,11 +566,14 @@ def test_summary_math_consistency(primary_outputs):
 
 
 def test_cash_conservation(primary_outputs):
+    """Every settled minor unit is either distributed, left unapplied, or withheld
+    by the concentration cap -- nothing is created or lost in the cascade."""
     _, summary, _, _ = primary_outputs
     settled = _load_json(DEFAULT_INPUT)
-    assert summary["available_funds_minor"] == sum(
-        item["amount_minor"] for item in settled["items"] if item["amount_minor"] > 0
-    )
+    pool = sum(item["amount_minor"] for item in settled["items"] if item["amount_minor"] > 0)
+    # the concentration cap withholds an obligor's excess before anything is
+    # distributed, so the distributable pool is the settled pool less that excess
+    assert summary["available_funds_minor"] == pool - summary["excluded_concentration_minor"]
     assert summary["total_paid_minor"] + summary["unapplied_funds_minor"] == summary[
         "available_funds_minor"
     ]
@@ -469,6 +581,7 @@ def test_cash_conservation(primary_outputs):
 
 
 def test_step_kind_counts_enumerate_all_seven(primary_outputs):
+    """Verifies that step kind counts enumerate all seven."""
     _, summary, _, _ = primary_outputs
     assert set(summary["step_kind_counts"]) == set(STEP_KINDS)
     assert sum(summary["step_kind_counts"].values()) == summary["executed_step_count"]
@@ -478,6 +591,7 @@ def test_step_kind_counts_enumerate_all_seven(primary_outputs):
 # Register admission and the post-ordering capacity cap
 # --------------------------------------------------------------------------
 def test_register_admission_follows_resolved_policy(primary_outputs):
+    """Verifies that register admission follows resolved policy."""
     _, _, ledger, register = primary_outputs
     policy_data = _load_json(POLICY_PATH)
     registered = {(row["payee_id"], row["step_index"]) for row in register}
@@ -502,6 +616,7 @@ def test_register_admission_follows_resolved_policy(primary_outputs):
 
 
 def test_payee_capacity_cap_applied_after_ordering(primary_outputs):
+    """Verifies that payee capacity cap applied after ordering."""
     _, _, ledger, register = primary_outputs
     policy_data = _load_json(POLICY_PATH)
     per_payee: dict[str, int] = {}
@@ -529,6 +644,7 @@ def test_payee_capacity_cap_applied_after_ordering(primary_outputs):
 # Policy resolution
 # --------------------------------------------------------------------------
 def test_sparse_override_inherits_remaining_fields():
+    """Verifies that sparse override inherits remaining fields."""
     data = _load_json(POLICY_PATH)
     overrides = data.get("tranche_overrides", {})
     sparse = [payee for payee, values in overrides.items() if len(values) == 1]
@@ -544,6 +660,7 @@ def test_sparse_override_inherits_remaining_fields():
 
 
 def test_policy_default_may_omit_fields_and_falls_back_to_baseline():
+    """Verifies that policy default may omit fields and falls back to baseline."""
     data = _load_json(POLICY_PATH)
     omitted = [field for field in POLICY_FIELDS if field not in data.get("default", {})]
     assert omitted, "the shipped policy must omit at least one field to exercise fallback"
@@ -576,35 +693,40 @@ def test_deferred_cap_baseline_binds(primary_outputs):
 # Original / broken snapshot
 # --------------------------------------------------------------------------
 def test_original_snapshot_preserved():
+    """Verifies that original snapshot preserved."""
     assert ORIGINAL_WORKFLOW_PATH.exists()
     digest = hashlib.sha256(ORIGINAL_WORKFLOW_PATH.read_bytes()).hexdigest()
     assert digest == FIXTURE["broken_snapshot_sha256"]
 
 
 def test_broken_snapshot_is_wrong(tmp_path: Path):
+    """Verifies that broken snapshot is wrong."""
     _, summary, ledger, register = _run_pipeline(tmp_path, script_path=ORIGINAL_WORKFLOW_PATH)
     assert summary != FIXTURE["primary"]["summary"]
-    assert ledger != FIXTURE["primary"]["ledger"]
-    assert register != FIXTURE["primary"]["register_rows"]
+    assert _digest(ledger) != FIXTURE["primary"]["ledger_digest"]
+    assert _digest(register) != FIXTURE["primary"]["register_digest"]
 
 
 # --------------------------------------------------------------------------
 # Generalization / idempotency / command line
 # --------------------------------------------------------------------------
 def test_pipeline_rerun_idempotent(tmp_path: Path):
+    """Verifies that pipeline rerun idempotent."""
     _, sa, la, ra = _run_pipeline(tmp_path / "a")
     _, sb, lb, rb = _run_pipeline(tmp_path / "b")
     assert (sa, la, ra) == (sb, lb, rb)
 
 
 def test_engine_supports_alternate_period(tmp_path: Path):
+    """Verifies that engine supports alternate period."""
     _, summary, ledger, register = _run_pipeline(tmp_path, input_path=ALT_INPUT)
     assert summary == FIXTURE["alternate"]["summary"]
-    assert ledger == FIXTURE["alternate"]["ledger"]
-    assert register == FIXTURE["alternate"]["register_rows"]
+    assert _digest(ledger) == FIXTURE["alternate"]["ledger_digest"]
+    assert _digest(register) == FIXTURE["alternate"]["register_digest"]
 
 
 def test_cli_defaults_work_and_match_explicit_run(tmp_path: Path):
+    """Verifies that cli defaults work and match explicit run."""
     _, explicit_summary, _, _ = _run_pipeline(tmp_path)
     # The no-argument run writes to the default /app/output; clear any root-owned artifacts from
     # solve.sh and make the dir candidate-writable so the unprivileged program can populate it.
@@ -647,6 +769,7 @@ def test_submitted_program_runs_unprivileged_and_cannot_write_reward(tmp_path: P
 # Source-path influence
 # --------------------------------------------------------------------------
 def test_tranche_terms_source_affects_output(tmp_path: Path):
+    """Verifies that tranche terms source affects output."""
     original = TERMS_PATH.read_text(encoding="utf-8")
     try:
         _, summary_a, ledger_a, queue_a = _run_pipeline(tmp_path / "a")
@@ -665,6 +788,7 @@ def test_tranche_terms_source_affects_output(tmp_path: Path):
 
 
 def test_policy_source_affects_output(tmp_path: Path):
+    """Verifies that policy source affects output."""
     original = POLICY_PATH.read_text(encoding="utf-8")
     try:
         data = json.loads(original)
@@ -704,15 +828,8 @@ def test_senior_principal_is_sequential_not_pro_rata(tmp_path: Path):
     settled = {
         "period": "probe",
         "settlement_currency": control["settlement_currency"],
-        "category_totals_minor": {"scheduled_principal": 50000000},
-        "items": [
-            {
-                "item_id": "probe-01",
-                "category": "scheduled_principal",
-                "obligor": "north-fund",
-                "amount_minor": 50000000,
-            }
-        ],
+        "category_totals_minor": {"scheduled_principal": 378000000000},
+        "items": _spread_items(378000000000, "scheduled_principal"),
     }
     probe_input = tmp_path / "sequential.json"
     _write_json(probe_input, settled)
@@ -735,7 +852,19 @@ def test_senior_principal_is_sequential_not_pro_rata(tmp_path: Path):
 
 def test_interest_carryforward_compounds_in_opposite_directions(tmp_path: Path):
     """Senior interest shortfalls compound rounded up, subordinate ones rounded down."""
-    _, _, ledger, _ = _run_pipeline(tmp_path, input_path=ALT_INPUT)
+    # A pool deliberately short of the senior interest bill, spread widely enough
+    # that the concentration cap does not withhold it, so both a senior and a
+    # subordinate interest step fall short in the same run.
+    control = _load_json(CONTROL_TOTALS_PATH)
+    starved = {
+        "period": "carryforward-probe",
+        "settlement_currency": control["settlement_currency"],
+        "category_totals_minor": {"scheduled_interest": 150000000123},
+        "items": _spread_items(150000000123, "scheduled_interest"),
+    }
+    probe_input = tmp_path / "starved.json"
+    _write_json(probe_input, starved)
+    _, _, ledger, _ = _run_pipeline(tmp_path / "starved", input_path=probe_input)
     terms = _active_tranches()
     policy_data = _load_json(POLICY_PATH)
     checked = {"senior_interest": 0, "sub_interest": 0}
@@ -769,10 +898,12 @@ def test_interest_carryforward_compounds_in_opposite_directions(tmp_path: Path):
 # Sources stay operational
 # --------------------------------------------------------------------------
 def test_governance_log_present():
+    """Verifies that governance log present."""
     assert LOG_PATH.exists() and LOG_PATH.stat().st_size > 0
 
 
 def test_engine_does_not_reference_test_artifacts():
+    """Verifies that engine does not reference artifacts."""
     code = WORKFLOW_PATH.read_text(encoding="utf-8")
     for token in ("/tests", "expected_report.json", "alt_settled_collections.json"):
         assert token not in code

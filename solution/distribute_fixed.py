@@ -59,11 +59,11 @@ POLICY_BASELINE = {
     "concentration_cap_bps": 900,
     "ic_trigger_bps": 11000,
     "oc_trigger_bps": 12000,
-    "divert_cap_minor": 3000000,
-    "residual_cap_minor": 1500000,
-    "deferred_sub_cap_minor": 900000,
-    "register_min_minor": 25000,
-    "register_shortfall_min_minor": 1,
+    "divert_cap_minor": 22680000000,
+    "residual_cap_minor": 11340000000,
+    "deferred_sub_cap_minor": 6804000000,
+    "register_min_minor": 189000000,
+    "register_shortfall_min_minor": 7560,
     "sub_penalty_bps": 200,
 }
 

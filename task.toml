@@ -70,9 +70,11 @@ plain cascade: the overcollateralisation ratio measured before the senior princi
 emitted post-payment reading does not, a short period pays the most senior tranche in full and the next
 nothing where a pro-rata split would have paid both, and the carryforward legs compound in opposite
 rounding directions. The frozen broken snapshot /app/workflow/.distribute.original is asserted present, and
-its outputs are asserted merely different from the sealed ones rather than pinned. Confirmed locally in the
-real two-container flow: after solve.sh the verifier gives reward 1; a fresh environment with no solve.sh
-gives 0, and so does an environment where the engine is repaired but the collections are never reconciled.
+its outputs are asserted merely different from the sealed ones rather than pinned. Verified in the real two-container flow at the shipped scale: after solve.sh the verifier gives reward 1;
+a fresh environment with no solve.sh gives 0, and so does one where the engine is repaired but the
+collections are never reconciled. The concentration cap is exercised by the graded data: the largest
+obligor sits above the resolved cap, so a non-zero amount is withheld from the distributable pool and
+reported in the summary, and dedicated tests re-derive that exclusion from the settled items.
 '''
 relevant_experience = '''
 Experience reconciling a raw servicer collections file to authoritative control totals under mixed units,
