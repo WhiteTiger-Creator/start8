@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -16,11 +17,22 @@ import pytest
 WORKFLOW_PATH = Path("/app/workflow/distribute.py")
 ORIGINAL_WORKFLOW_PATH = Path("/app/workflow/.distribute.original")
 DEFAULT_INPUT = Path("/app/data/settled_collections.json")
+
+# Full-run budget published by the output contract and stated in instruction.md.
+RUNTIME_BUDGET_SEC = 90.0
+
+# Wall-clock of each graded run, keyed by the input it was given, so the budget
+# stated in instruction.md and report_spec.json is enforced at its stated value
+# rather than only by the much looser harness timeout.
+_ELAPSED: dict[str, float] = {}
 COLLECTIONS_PATH = Path("/app/data/collections.json")
 CONTROL_TOTALS_PATH = Path("/app/data/control_totals.json")
 TERMS_PATH = Path("/app/data/tranche_terms.json")
 POLICY_PATH = Path("/app/data/waterfall_policy.json")
 SPEC_PATH = Path("/app/docs/report_spec.json")
+# The contract is golden metadata: the verifier reads it from its own image,
+# never from the agent-writable copy under /app.
+GOLDEN_CONTRACT_PATH = Path("/tests/fixtures/contract_golden.json")
 LOG_PATH = Path("/app/incident/waterfall_governance_log.md")
 EXPECTED_FIXTURE = Path("/tests/fixtures/expected_report.json")
 ALT_INPUT = Path("/tests/fixtures/alt_settled_collections.json")
@@ -30,7 +42,7 @@ SHIPPED_SETTLED_REFERENCE_PATH = Path("/tests/fixtures/shipped_settled.json")
 WATERFALL_POLICY_PATH = Path("/app/data/waterfall_policy.json")
 
 FIXTURE = json.loads(EXPECTED_FIXTURE.read_text())
-SPEC = json.loads(SPEC_PATH.read_text())
+SPEC = json.loads(GOLDEN_CONTRACT_PATH.read_text())
 
 LEDGER_KEYS = set(SPEC["tranche_ledger_json"]["required_fields"])
 REGISTER_KEYS = set(SPEC["payment_register"]["required_fields"])
@@ -49,12 +61,13 @@ TRANCHE_KINDS = (
 )
 
 POLICY_FIELDS = (
-    "deferred_sub_cap_minor", "divert_cap_minor", "ic_trigger_bps", "oc_trigger_bps",
+    "concentration_cap_bps", "deferred_sub_cap_minor", "divert_cap_minor", "ic_trigger_bps", "oc_trigger_bps",
     "register_min_minor", "register_shortfall_min_minor", "residual_cap_minor",
     "sub_penalty_bps",
 )
 BASELINE = {
-    "ic_trigger_bps": 11000,
+    "concentration_cap_bps": 900,
+    "ic_trigger_bps": 30340,
     "oc_trigger_bps": 12000,
     "divert_cap_minor": 22680000000,
     "residual_cap_minor": 11340000000,
@@ -126,7 +139,9 @@ _SETPRIV = ["setpriv", "--reuid=65534", "--regid=65534", "--clear-groups", "--no
 # The submitted program gets a minimal explicit environment rather than inheriting the verifier's
 # (PATH/PYTHONPATH/CI variables and any other grader context).
 _CANDIDATE_ENV = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/candidate-work", "LANG": "C.UTF-8"}
-_CANDIDATE_TIMEOUT = 300
+# The contract's budget is the timeout: an overrunning run is killed and the
+# suite fails, with no wall-clock comparison to go flaky.
+_CANDIDATE_TIMEOUT = int(RUNTIME_BUDGET_SEC)
 
 
 def _candidate_dir() -> Path:
@@ -152,10 +167,12 @@ def _run_pipeline(tmp_path: Path, script_path: Path = WORKFLOW_PATH, input_path:
     staged_input = work / "settled_input.json"
     shutil.copy(str(input_path), str(staged_input))
     os.chmod(staged_input, 0o644)
+    started = time.monotonic()
     result = _run_agent(
         [sys.executable, str(script_path), "--input", str(staged_input), "--output-dir", str(out_dir)],
         cwd=work,
     )
+    _ELAPSED[str(input_path)] = time.monotonic() - started
     assert result.returncode == 0
     summary = _load_json(out_dir / "distribution_summary.json")
     ledger = _load_json(out_dir / "tranche_ledger.json")
@@ -306,8 +323,8 @@ def test_shipped_and_mishandled_settlements_differ_from_the_reconciled_one():
     """The reconciliation is real work: none of the shortcuts land on the settled set."""
     expected = FIXTURE["reconciled_digest"]
     assert FIXTURE["shipped_settled_digest"] != expected
-    assert _unnormalised() != expected
-    assert _reversals_ignored() != expected
+    assert _digest(_unnormalised()) != expected
+    assert _digest(_reversals_ignored()) != expected
     assert _digest(_naive_sum()) != expected
 
 
@@ -907,3 +924,73 @@ def test_engine_does_not_reference_test_artifacts():
     code = WORKFLOW_PATH.read_text(encoding="utf-8")
     for token in ("/tests", "expected_report.json", "alt_settled_collections.json"):
         assert token not in code
+
+
+def test_graded_run_meets_documented_runtime_budget(primary_outputs):
+    """The graded run finishes inside the budget instruction.md and the output
+    contract both state, not merely inside the harness safety timeout."""
+    elapsed = _ELAPSED[str(DEFAULT_INPUT)]
+    assert elapsed <= RUNTIME_BUDGET_SEC, (
+        f"graded run took {elapsed:.1f}s, over the {RUNTIME_BUDGET_SEC}s budget"
+    )
+
+
+def test_runtime_budget_is_stated_in_the_contract():
+    """The budget enforced above is the one the output contract publishes, so the
+    verifier and the contract cannot drift apart."""
+    assert int(SPEC["runtime_budget_seconds"]) == int(RUNTIME_BUDGET_SEC)
+
+
+def test_shipped_contract_matches_the_golden_copy():
+    """The output contract in the environment is unmodified.
+
+    Field lists, container shapes and sort orders are golden metadata and are read
+    from the verifier's own image; this proves the agent's copy still agrees with
+    it, so the contract cannot be trimmed to weaken a schema check.
+    """
+    shipped = json.loads(SPEC_PATH.read_text(encoding="utf-8"))
+    assert shipped == json.loads(GOLDEN_CONTRACT_PATH.read_text(encoding="utf-8"))
+
+
+def test_an_obligor_exactly_on_the_concentration_cap_is_not_trimmed(tmp_path: Path):
+    """#WF-7172 trims a share that EXCEEDS the cap, never one sitting on it.
+
+    Two obligors are placed either side of the line against the same pool: one
+    whose floored share equals the cap exactly while its total still sits above
+    the allowance, and one a basis point over. Only the second is trimmed.
+    Applying max(total - allowance, 0) to every obligor -- which reads the rule as
+    "at or above" -- over-excludes by the first obligor's excess.
+    """
+    control = _load_json(CONTROL_TOTALS_PATH)
+    cap = int(_load_json(WATERFALL_POLICY_PATH)["default"]["concentration_cap_bps"])
+    pool = 10_000_000_000
+    allowance = cap * pool // BPS
+    on_cap = allowance + 1
+    over_cap = (cap + 1) * pool // BPS + 1
+    assert on_cap * BPS // pool == cap, "the on-cap obligor must floor to the cap exactly"
+    assert on_cap > allowance, "the on-cap obligor must still sit above its allowance"
+    assert over_cap * BPS // pool > cap, "the over-cap obligor must floor above the cap"
+
+    rest = pool - on_cap - over_cap
+    items = [
+        {"item_id": "probe-on-cap", "category": "scheduled_principal",
+         "obligor": "probe-on-cap", "amount_minor": on_cap},
+        {"item_id": "probe-over-cap", "category": "scheduled_principal",
+         "obligor": "probe-over-cap", "amount_minor": over_cap},
+    ] + _spread_items(rest, "scheduled_principal", obligors=40)
+    items.sort(key=lambda i: (i["category"], i["item_id"]))
+    settled = {
+        "period": "probe",
+        "settlement_currency": control["settlement_currency"],
+        "category_totals_minor": {"scheduled_principal": pool},
+        "items": items,
+    }
+    probe_input = tmp_path / "concentration.json"
+    _write_json(probe_input, settled)
+    _, summary, _, _ = _run_pipeline(tmp_path / "run", input_path=probe_input)
+
+    assert summary["max_obligor_concentration_bps"] == over_cap * BPS // pool
+    assert summary["excluded_concentration_minor"] == over_cap - allowance, (
+        "only the obligor over the cap is trimmed; the one sitting on it "
+        "contributes in full"
+    )

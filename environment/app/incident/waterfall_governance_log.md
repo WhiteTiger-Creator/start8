@@ -461,7 +461,7 @@ Thread archived; see the #WF decision entries for anything affecting engine beha
 
 ### Review entry 4106 — cash manager
 Desk lead logged a routine observation for the cash manager during distribution review window 4106. Custodian reconciliation drill completed; settlement acknowledgment stayed within the governance window.
-> **Governance decision (2026-05-18 - #WF-4150)** Priya: policy baseline (read from /app/data/waterfall_policy.json at that fixed absolute path; --input never relocates it). Any field the policy file omits keeps its baseline: ic_trigger_bps = 30340; oc_trigger_bps = 12000; divert_cap_minor = 22680000000; residual_cap_minor = 11340000000; deferred_sub_cap_minor = 6804000000; register_min_minor = 189000000; register_shortfall_min_minor = 7560; sub_penalty_bps = 200. These baselines revise the interim figures quoted in #WF-4124
+> **Governance decision (2026-05-18 - #WF-4150)** Priya: policy baseline (read from /app/data/waterfall_policy.json at that fixed absolute path; --input never relocates it). Any field the policy file omits keeps its baseline: concentration_cap_bps = 900; ic_trigger_bps = 30340; oc_trigger_bps = 12000; divert_cap_minor = 22680000000; residual_cap_minor = 11340000000; deferred_sub_cap_minor = 6804000000; register_min_minor = 189000000; register_shortfall_min_minor = 7560; sub_penalty_bps = 200. These baselines revise the interim figures quoted in #WF-4124
 Historical spreadsheet distributions remain archived and non-authoritative for the engine acceptance.
 
 ### Review entry 4107 — trustee reporting desk

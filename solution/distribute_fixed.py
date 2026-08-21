@@ -57,7 +57,7 @@ REGISTERED_KINDS = (
 # values; the policy file may override per default and per tranche.
 POLICY_BASELINE = {
     "concentration_cap_bps": 900,
-    "ic_trigger_bps": 11000,
+    "ic_trigger_bps": 30340,
     "oc_trigger_bps": 12000,
     "divert_cap_minor": 22680000000,
     "residual_cap_minor": 11340000000,
@@ -299,9 +299,15 @@ def run(input_path: str, output_dir: str) -> None:
         )
     cap_bps = deal["concentration_cap_bps"]
     allowance = cap_bps * pool_total // BPS if pool_total else 0
-    excluded_concentration = sum(
-        max(total - allowance, 0) for total in obligor_totals.values()
-    )
+    # #WF-7172: an obligor whose share EXCEEDS the cap contributes only up to its
+    # allowance. A share sitting exactly on the cap is not over it, so it
+    # contributes in full even where flooring leaves its total above the
+    # allowance.
+    excluded_concentration = 0
+    for total in obligor_totals.values():
+        share_bps = total * BPS // pool_total if pool_total else 0
+        if share_bps > cap_bps:
+            excluded_concentration += max(total - allowance, 0)
     max_obligor_bps = max(
         (total * BPS // pool_total for total in obligor_totals.values()), default=0
     )
