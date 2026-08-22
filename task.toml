@@ -89,7 +89,7 @@ category = "Operations"
 subcategory = "Finance"
 tags = ["structured-finance", "waterfall", "tranches", "collections-reconciliation", "coverage-triggers"]
 expert_time_estimate_hours = 4
-difficulty = "advanced"
+difficulty = "core"
 languages = ["python"]
 
 [environment]

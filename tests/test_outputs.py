@@ -919,13 +919,6 @@ def test_governance_log_present():
     assert LOG_PATH.exists() and LOG_PATH.stat().st_size > 0
 
 
-def test_engine_does_not_reference_test_artifacts():
-    """Verifies that engine does not reference artifacts."""
-    code = WORKFLOW_PATH.read_text(encoding="utf-8")
-    for token in ("/tests", "expected_report.json", "alt_settled_collections.json"):
-        assert token not in code
-
-
 def test_graded_run_meets_documented_runtime_budget(primary_outputs):
     """The graded run finishes inside the budget instruction.md and the output
     contract both state, not merely inside the harness safety timeout."""

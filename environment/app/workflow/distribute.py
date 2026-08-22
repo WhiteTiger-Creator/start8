@@ -2,11 +2,9 @@
 """Structured-finance payment waterfall engine (INCIDENT SNAPSHOT — DO NOT SHIP).
 
 This is the distribution engine as it stood when the period's trustee review failed.
-It still evaluates several stages against the February draft proposals and the March
-interim decisions that the deal governance board later reversed, so the cascade it
-runs, the coverage tests it applies and the register it prints are wrong. Restore it
-to the board's final decisions recorded in
-/app/incident/waterfall_governance_log.md.
+It still evaluates stages against proposals the deal governance board later reversed,
+so nothing it produces can be relied on. Restore it to the board's final decisions,
+recorded in /app/incident/waterfall_governance_log.md.
 """
 
 from __future__ import annotations
@@ -23,7 +21,7 @@ WATERFALL_POLICY_PATH = "/app/data/waterfall_policy.json"
 SCHEMA_VERSION = "waterfall-dist-v1"
 
 BPS = 10000
-ACCRUAL_DENOM = 3650000         # #WF-4006 draft: actual/365 accrual basis (wrong)
+ACCRUAL_DENOM = 3650000         # basis points times the days in a 365-day year
 COUPON_MIN_BPS = 1
 COUPON_MAX_BPS = 3000
 SUBORDINATE_CLASS = "subordinate"
@@ -128,7 +126,7 @@ def load_tranches(terms: dict) -> list[dict]:
 def load_fees(terms: dict, pool_balance: int) -> list[dict]:
     fees = []
     for row in terms.get("fees", []):
-        # #WF-4006 draft: every accrual, including the fee basis leg, rounds down.
+        # the flat component plus the basis component on the pool balance
         due = coerce_int(row.get("flat_minor", 0)) + (
             pool_balance * coerce_int(row.get("basis_bps", 0)) // BPS
         )
@@ -151,7 +149,7 @@ def resolve_policy(payee_id: str, policy_data: dict) -> dict:
 
 
 def accrue_interest(tranche: dict, period_days: int) -> int:
-    # #WF-4006 draft: one basis for every class, always rounded down.
+    # coupon times balance times days, over the accrual denominator
     return tranche["balance_minor"] * tranche["coupon_bps"] * period_days // ACCRUAL_DENOM
 
 
@@ -186,7 +184,7 @@ class Cascade:
             "funds_after_minor": self.funds,
             "opening_balance_minor": opening_balance,
             "closing_balance_minor": closing_balance,
-            # #WF-4010 draft: unpaid amounts carry forward at face value.
+            # whatever the step left unpaid
             "carryforward_out_minor": max(due - paid, 0),
             "trigger_flag": trigger_flag,
         }
@@ -248,7 +246,7 @@ def run(input_path: str, output_dir: str) -> None:
     subordinate = [t for t in tranches if t["tranche_class"] == SUBORDINATE_CLASS]
     senior_interest_due = sum(t["interest_due_minor"] for t in senior)
 
-    # #WF-4020 draft: coverage is total collections against the whole note stack.
+    # the coverage test, taken against the note balances
     note_balance = sum(t["balance_minor"] for t in tranches)
     ic_bps = (available * BPS) // note_balance if note_balance > 0 else 0
     ic_breached = note_balance > 0 and ic_bps < deal["ic_trigger_bps"]
@@ -268,7 +266,7 @@ def run(input_path: str, output_dir: str) -> None:
             closing_balance=balances[tranche["tranche_id"]],
         )
 
-    # #WF-4115 interim: a failed coverage test simply skips subordinate interest.
+    # subordinate interest is reached only where the coverage test allows it
     if not ic_breached:
         for tranche in subordinate:
             cascade.execute(
@@ -279,13 +277,13 @@ def run(input_path: str, output_dir: str) -> None:
                 closing_balance=balances[tranche["tranche_id"]],
             )
 
-    # #WF-4109 interim: the overcollateralisation test reads opening balances,
-    # before any principal is applied.
+    # the overcollateralisation test, taken against the senior balances as they
+    # stand at this point in the cascade
     senior_balance_before = sum(balances[t["tranche_id"]] for t in senior)
     oc_bps = (pool_balance * BPS) // senior_balance_before if senior_balance_before > 0 else 0
     oc_breached = senior_balance_before > 0 and oc_bps < deal["oc_trigger_bps"]
 
-    # #WF-4008 draft: senior principal is shared pro rata by scheduled principal.
+    # the senior principal budget is shared out across the class
     scheduled_total = sum(t["principal_due_minor"] for t in senior)
     principal_budget = min(cascade.funds, scheduled_total)
     for tranche in senior:
@@ -320,14 +318,13 @@ def run(input_path: str, output_dir: str) -> None:
         balances[tranche["tranche_id"]] = opening - step["paid_minor"]
         step["closing_balance_minor"] = balances[tranche["tranche_id"]]
 
-    # #WF-4018 draft: the residual step sweeps whatever is left, uncapped.
+    # the residual payee takes what is left
     cascade.execute("residual", residual_payee, cascade.funds)
     unapplied = cascade.funds
 
     steps = cascade.steps
 
-    # #WF-4040 draft: every executed step is registered.
-    # #WF-4012 draft: the register lists the steps in execution order.
+    # the register is built from the executed steps
     seen: dict[str, int] = {}
     register: list[dict] = []
     for step in steps:
@@ -370,7 +367,7 @@ def run(input_path: str, output_dir: str) -> None:
         "executed_step_count": len(steps),
         "registered_step_count": len(register),
         "step_kind_counts": step_kind_counts,
-        # #WF-4048 interim: maxima over every executed step.
+        # maxima across the steps
         "max_paid_minor": max((s["paid_minor"] for s in steps), default=0),
         "max_shortfall_minor": max((s["shortfall_minor"] for s in steps), default=0),
         "max_carryforward_out_minor": max((s["carryforward_out_minor"] for s in steps), default=0),
