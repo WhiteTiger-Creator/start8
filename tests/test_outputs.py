@@ -93,7 +93,13 @@ def _load_json(path: Path):
 
 
 def _load_jsonl(path: Path):
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    """Read a JSON-lines artifact without softening the contract.
+
+    Blank lines are not skipped: the contract asks for one compact object per
+    line, so a run that pads the file with them has not met it and must not be
+    read as though it had.
+    """
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
 def _spread_items(total: int, category: str, obligors: int = 15) -> list[dict]:
@@ -527,9 +533,10 @@ def test_register_sorted(primary_outputs):
 def test_payment_register_jsonl_compact(primary_outputs):
     """Verifies that payment register jsonl compact."""
     out_dir, _, _, _ = primary_outputs
-    for line in (out_dir / "payment_register.jsonl").read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
+    raw = (out_dir / "payment_register.jsonl").read_text(encoding="utf-8")
+    assert raw.endswith("\n") and not raw.endswith("\n\n"), "the file ends on one newline"
+    for line in raw.splitlines():
+        assert line.strip(), "the register carries no blank line"
         assert ": " not in line
         assert json.dumps(json.loads(line), separators=(",", ":")) == line
 
@@ -762,13 +769,22 @@ def test_submitted_program_runs_unprivileged_and_cannot_write_reward(tmp_path: P
     reward = Path("/logs/verifier/reward.txt")
     if not reward.exists():
         reward.write_text("0")
-    os.chmod("/logs/verifier", 0o755)
-    os.chmod(reward, 0o644)
+    # The channel's modes are left exactly as test.sh set them: this asserts the
+    # isolation that is really in force, rather than relaxing it to be measured.
     probe = _candidate_dir() / "probe.py"
     probe.write_text(
         "import os\n"
         "print(os.getuid())\n"
-        "open('/logs/verifier/reward.txt', 'w').write('1')\n",
+        "try:\n"
+        "    open('/logs/verifier/reward.txt').read()\n"
+        "    print('readable')\n"
+        "except OSError:\n"
+        "    print('unreadable')\n"
+        "try:\n"
+        "    open('/logs/verifier/reward.txt', 'w').write('1')\n"
+        "    print('writable')\n"
+        "except OSError:\n"
+        "    print('unwritable')\n",
         encoding="utf-8",
     )
     os.chmod(probe, 0o644)
@@ -776,10 +792,8 @@ def test_submitted_program_runs_unprivileged_and_cannot_write_reward(tmp_path: P
         _SETPRIV + [sys.executable, str(probe)],
         capture_output=True, text=True, cwd=str(_CWORK), check=False,
     )
-    assert result.stdout.strip().splitlines()[0] == "65534", "submitted program must run as uid 65534"
-    assert result.returncode != 0 and "Permission denied" in result.stderr, (
-        "unprivileged submitted program must not be able to write the reward path"
-    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert result.stdout.splitlines() == ["65534", "unreadable", "unwritable"], result.stdout
 
 
 # --------------------------------------------------------------------------
